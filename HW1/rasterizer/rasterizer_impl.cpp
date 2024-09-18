@@ -61,6 +61,23 @@ void Rasterizer::DrawPixel(uint32_t x, uint32_t y, Triangle trig, AntiAliasConfi
 void Rasterizer::AddModel(MeshTransform transform, glm::mat4 rotation)
 {
     /* model.push_back( model transformation constructed from translation, rotation and scale );*/
+
+    glm::mat4x4 scaling {
+        transform.scale.x,  0,  0,  0,
+        0,  transform.scale.y,  0,  0,
+        0,  0,  transform.scale.z,  0,
+        0,  0,  0,  1,
+    };
+    
+    glm::mat4x4 translation { 
+        1,  0,  0,  0,
+        0,  1,  0,  0,
+        0,  0,  1,  0,
+        transform.translation.x,  transform.translation.y,  transform.translation.z,  1,
+    };
+
+    model.push_back(translation * rotation * scaling);
+
     return;
 }
 
@@ -69,11 +86,26 @@ void Rasterizer::SetView()
 {
     const Camera& camera = this->loader.GetCamera();
     glm::vec3 cameraPos = camera.pos;
-    glm::vec3 cameraLookAt = camera.lookAt;
-    glm::vec3 cameraUp = camera.up;
+    glm::vec3 cameraLookAt = glm::normalize(camera.lookAt - cameraPos);
+    glm::vec3 cameraUp = glm::normalize(camera.up);
+    glm::vec3 binormal = glm::normalize(glm::cross(cameraLookAt, cameraUp));
+
+    glm::mat4 translation {
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        -cameraPos.x, -cameraPos.y, -cameraPos.z, 1
+    };
+
+    glm::mat4 rotation {
+        binormal.x, cameraUp.x, -cameraLookAt.x, 0,
+        binormal.y, cameraUp.y, -cameraLookAt.y, 0,
+        binormal.z, cameraUp.z, -cameraLookAt.z, 0,
+        0, 0, 0, 1
+    };
 
     // TODO change this line to the correct view matrix
-    this->view = glm::mat4(1.);
+    this->view = rotation * translation;
 
     return;
 }
@@ -83,14 +115,36 @@ void Rasterizer::SetProjection()
 {
     const Camera& camera = this->loader.GetCamera();
 
-    float nearClip = camera.nearClip;                   // near clipping distance, strictly positive
-    float farClip = camera.farClip;                     // far clipping distance, strictly positive
-    
+    float n = -camera.nearClip;                   // near clipping distance, strictly positive
+    float f = -camera.farClip;                     // far clipping distance, strictly positive
     float width = camera.width;
     float height = camera.height;
-    
+
+    std::cout << "n: " << n << " f: " << f << " width: " << width << " height: " << height << std::endl;
+
+    glm::mat4 persp_to_ortho {
+        n, 0, 0, 0,
+        0, n, 0, 0,
+        0, 0, n + f, 1,
+        0, 0, -n * f, 0,
+    };
+
+    glm::mat4 ortho_translate {
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, -(n+f)/2, 1
+    };
+
+    glm::mat4 ortho_scale {
+        2 / width, 0, 0, 0,
+        0, 2 / height, 0, 0,
+        0, 0, 2 / (n - f), 0,
+        0, 0, 0, 1
+    };
+
     // TODO change this line to the correct projection matrix
-    this->projection = glm::mat4(1.);
+    this->projection = ortho_scale * ortho_translate * persp_to_ortho;
 
     return;
 }
@@ -102,7 +156,18 @@ void Rasterizer::SetScreenSpace()
     float height = this->loader.GetHeight();
 
     // TODO change this line to the correct screenspace matrix
-    this->screenspace = glm::mat4(1.);
+    // this->screenspace = glm::mat4{
+    //     width/2, 0, 0, 0,
+    //     0, height/2, 0, 0,
+    //     0, 0, 1, 0,
+    //     0, 0, 0, 1,
+    // };
+    this->screenspace = glm::mat4{
+        width/2, 0, 0, 0,
+        0, height/2, 0, 0,
+        0, 0, 1, 0,
+        width/2, height/2, 0, 1,
+    };
 
     return;
 }
@@ -110,11 +175,23 @@ void Rasterizer::SetScreenSpace()
 // TODO
 glm::vec3 Rasterizer::BarycentricCoordinate(glm::vec2 pos, Triangle trig)
 {
-    return glm::vec3();
+    auto x = pos.x;
+    auto y = pos.y;
+    auto Xa = trig.pos[0].x;
+    auto Ya = trig.pos[0].y;
+    auto Xb = trig.pos[1].x;
+    auto Yb = trig.pos[1].y;
+    auto Xc = trig.pos[2].x;
+    auto Yc = trig.pos[2].y;
+
+    float alpha = ((Xb-x)*(Yc-Yb) + (y-Yb)*(Xc-Xb)) / ((Xb-Xa)*(Yc-Yb) + (Ya-Yb)*(Xc-Xb)); float beta = ((Xc-x)*(Ya-Yc) + (y-Yc)*(Xa-Xc)) / ((Xc-Xb)*(Ya-Yc) + (Yb-Yc)*(Xa-Xc));
+    float gamma = 1 - alpha - beta;
+
+    return glm::vec3(alpha, beta, gamma);
 }
 
 // TODO
-float Rasterizer::zBufferDefault = float();
+float Rasterizer::zBufferDefault = float('-inf');
 
 // TODO
 void Rasterizer::UpdateDepthAtPixel(uint32_t x, uint32_t y, Triangle original, Triangle transformed, ImageGrey& ZBuffer)
