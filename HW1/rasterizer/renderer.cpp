@@ -7,6 +7,8 @@
 #include "rasterizer.hpp"
 #include "renderer.hpp"
 
+#include "../thirdparty/glm/gtx/string_cast.hpp"
+
 void PrintTask(const Loader& loader)
 {
     std::string sephead = "======================Config======================\n";
@@ -109,6 +111,15 @@ void Renderer::Render(int argc, char** argv)
             if (rasterizer.model.size() == 0)
                 throw std::runtime_error("No model matrix specified for transform test");
 
+            glm::vec4 Modeled = rasterizer.model[0] * input4;
+            glm::vec4 Viewed = rasterizer.view * Modeled;
+            glm::vec4 Projected = rasterizer.projection * Viewed;
+            glm::vec4 Screened = rasterizer.screenspace * Projected;
+            std::cout << "Modeled: " << ToStr(Modeled) << '\n';
+            std::cout << "Viewed: " << ToStr(Viewed) << '\n';
+            std::cout << "Projected: " << ToStr(Projected) << '\n';
+            std::cout << "Screened: " << ToStr(Screened) << '\n';
+            std::cout << "Output: " << ToStr(viewxprojection * rasterizer.model[0] * input4) << '\n';
             glm::vec4 output = viewxprojection * rasterizer.model[0] * input4;
             PrintTaskTransformTest(input, output, expected);
         }
