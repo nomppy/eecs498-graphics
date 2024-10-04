@@ -156,12 +156,6 @@ void Rasterizer::SetScreenSpace()
     float height = this->loader.GetHeight();
 
     // TODO change this line to the correct screenspace matrix
-    // this->screenspace = glm::mat4{
-    //     width/2, 0, 0, 0,
-    //     0, height/2, 0, 0,
-    //     0, 0, 1, 0,
-    //     0, 0, 0, 1,
-    // };
     this->screenspace = glm::mat4{
         width/2, 0, 0, 0,
         0, height/2, 0, 0,
@@ -184,31 +178,85 @@ glm::vec3 Rasterizer::BarycentricCoordinate(glm::vec2 pos, Triangle trig)
     auto Xc = trig.pos[2].x;
     auto Yc = trig.pos[2].y;
 
-    float alpha = ((Xb-x)*(Yc-Yb) + (y-Yb)*(Xc-Xb)) / ((Xb-Xa)*(Yc-Yb) + (Ya-Yb)*(Xc-Xb)); float beta = ((Xc-x)*(Ya-Yc) + (y-Yc)*(Xa-Xc)) / ((Xc-Xb)*(Ya-Yc) + (Yb-Yc)*(Xa-Xc));
+    float alpha = ((Xb-x)*(Yc-Yb) + (y-Yb)*(Xc-Xb)) / ((Xb-Xa)*(Yc-Yb) + (Ya-Yb)*(Xc-Xb)); 
+    float beta = ((Xc-x)*(Ya-Yc) + (y-Yc)*(Xa-Xc)) / ((Xc-Xb)*(Ya-Yc) + (Yb-Yc)*(Xa-Xc));
     float gamma = 1 - alpha - beta;
 
     return glm::vec3(alpha, beta, gamma);
 }
 
 // TODO
-float Rasterizer::zBufferDefault = float('-inf');
+float Rasterizer::zBufferDefault = float(-1);
 
 // TODO
 void Rasterizer::UpdateDepthAtPixel(uint32_t x, uint32_t y, Triangle original, Triangle transformed, ImageGrey& ZBuffer)
 {
+    transformed.Homogenize();
+    glm::vec3 bc = BarycentricCoordinate(glm::vec2(x+0.5f, y+0.5f), transformed);
+    if (bc[0] < 0 || bc[1] < 0 || bc[2] < 0) return;
 
-    float result;
-    ZBuffer.Set(x, y, result);
+    float Az = transformed.pos[0].z;
+    float Bz = transformed.pos[1].z;
+    float Cz = transformed.pos[2].z;
 
-    return;
+    float result = bc[0] * Az + bc[1] * Bz + bc[2] * Cz;
+    if (result > ZBuffer.Get(x, y).value_or(zBufferDefault)) {
+        ZBuffer.Set(x, y, result);
+    }
 }
 
 // TODO
 void Rasterizer::ShadeAtPixel(uint32_t x, uint32_t y, Triangle original, Triangle transformed, Image& image)
 {
+    transformed.Homogenize();
 
-    Color result;
-    image.Set(x, y, result);
+    glm::vec3 bc = BarycentricCoordinate(glm::vec2(x+0.5f, y+0.5f), transformed);
+    if (bc[0] < 0 || bc[1] < 0 || bc[2] < 0) return;
+
+    float Az = transformed.pos[0].z;
+    float Bz = transformed.pos[1].z;
+    float Cz = transformed.pos[2].z;
+    const Camera& camera = this->loader.GetCamera();
+    float n = camera.nearClip;
+
+    float result = bc.x * Az + bc.y * Bz + bc.z * Cz;
+
+    if (result == ZBuffer.Get(x, y).value_or(zBufferDefault)) {
+        // float ndc_x = bc[0] * transformed.pos[0].x + bc[1] * transformed.pos[1].x + bc[2] * transformed.pos[2].x;
+        // float ndc_y = bc[0] * transformed.pos[0].y + bc[1] * transformed.pos[1].y + bc[2] * transformed.pos[2].y;
+        // float world_z = 1 / (bc[0] / transformed.pos[0].z + bc[1] / transformed.pos[1].z + bc[2] / transformed.pos[2].z);
+        // float world_x = ndc_x * world_z / n;
+        // float world_y = ndc_y * world_z / n;
+
+        glm::vec3 pos_world = bc[0] * original.pos[0] + 
+                              bc[1] * original.pos[1] + 
+                              bc[2] * original.pos[2];
+        glm::vec3 normal = bc[0] * original.normal[0] + bc[1] * original.normal[1] + bc[2] * original.normal[2];
+
+        // attempt to compute the non-approximate world coordinates of the pixel
+        // original.Homogenize();
+        // glm::vec3 bc_world = BarycentricCoordinate(glm::vec2(world_x, world_y), original);
+        // glm::vec3 pos_world = bc_world[0] * original.pos[0] + bc_world[1] * original.pos[1] + bc_world[2] * original.pos[2];
+        // glm::vec3 normal = bc_world[0] * original.normal[0] + bc_world[1] * original.normal[1] + bc_world[2] * original.normal[2];
+
+        normal = glm::normalize(normal);
+
+        glm::vec3 v = glm::normalize(camera.pos-pos_world);
+
+        Color ambient = this->loader.GetAmbientColor();
+        const std::vector<Light>& lights = this->loader.GetLights();
+        for (const Light& light : lights) {
+            glm::vec3 l = glm::normalize(light.pos-pos_world);
+            glm::vec3 h = glm::normalize(l + v);
+
+            float r_squared = pow(glm::length(light.pos-pos_world), 2);
+            float l_d = (light.intensity/r_squared * glm::max(0.f, glm::dot(normal, l)));
+            float l_s = (light.intensity/r_squared * pow(glm::max(0.f, glm::dot(normal, h)), this->loader.GetSpecularExponent()));
+            ambient = ambient + light.color * (l_d + l_s);
+        }
+
+        image.Set(x, y, ambient);
+    }
 
     return;
 }
