@@ -183,7 +183,8 @@ void Renderer::Render(int argc, char** argv)
 
                     transformed.Homogenize();
 
-#if defined PRINT_TRIG_DETAIL
+#if defined PRINT_TRIG_DETAIL  
+                    PrintTaskTriangle(original);
                     PrintTaskTriangle(transformed);
 #endif
 
