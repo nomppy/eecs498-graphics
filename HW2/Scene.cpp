@@ -13,9 +13,11 @@ Vec3 Scene::trace(const Ray &ray, int bouncesLeft, bool discardEmission) {
     }
     if (bouncesLeft < 0) return {};
 
-    // TODO...
-    
-    return {};
+    Intersection inter = getIntersection(ray);
+    if (!inter.happened) return {};
+
+    return inter.getDiffuseColor();
+
 }
 
 tinyobj::ObjReader Scene::reader {};
