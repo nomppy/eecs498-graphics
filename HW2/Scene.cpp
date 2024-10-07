@@ -11,17 +11,17 @@ Vec3 Scene::trace(const Ray &ray, int bouncesLeft, bool discardEmission) {
     if constexpr(DEBUG) {
         assert (ray.isNormalized());
     }
-    if (bouncesLeft < 0) return {};
+    if (bouncesLeft == 0) return {};
 
     Intersection inter = getIntersection(ray);
     if (!inter.happened) return {};
 
     Ray omega_o { inter.pos, Random::randomHemisphereDirection(inter.getNormal()) };
     Intersection light_inter { getIntersection(omega_o) };
-    if (light_inter.happened && light_inter.object->hasEmission) {
+    if (light_inter.happened) {
         Vec3 brdf { inter.calcBRDF(-omega_o.dir, -ray.dir)};
         float cosine_term = omega_o.dir.dot(inter.getNormal());
-        return inter.getEmission() + (2*PI * cosine_term) * brdf * light_inter.getEmission();
+        return inter.getEmission() + (2*PI * cosine_term) * brdf * trace(omega_o, bouncesLeft-1, false);
     }
 
     return {};
