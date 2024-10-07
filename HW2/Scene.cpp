@@ -16,8 +16,21 @@ Vec3 Scene::trace(const Ray &ray, int bouncesLeft, bool discardEmission) {
     Intersection inter = getIntersection(ray);
     if (!inter.happened) return {};
 
-    return inter.getDiffuseColor();
+    const Vec3& inter_normal { inter.getNormal() };
+    const Vec3& inter_pos { inter.pos };
+    Vec3 radiance {};
 
+    for (int i { 0 }; i < SPP; ++i) {
+        Ray omega_o { inter_pos, Random::randomHemisphereDirection(inter_normal) };
+        Intersection inter { getIntersection(omega_o)};
+        if (inter.happened && inter.object->hasEmission) {
+            Vec3 brdf { inter.calcBRDF(omega_o.dir, -ray.dir)};
+            float cosine_term = omega_o.dir.dot(inter_normal);
+            radiance += brdf * inter.getEmission() * cosine_term / SPP / 2*PI;
+        }
+    }
+
+    return radiance;
 }
 
 tinyobj::ObjReader Scene::reader {};
