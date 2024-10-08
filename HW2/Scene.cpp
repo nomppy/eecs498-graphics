@@ -16,12 +16,26 @@ Vec3 Scene::trace(const Ray &ray, int bouncesLeft, bool discardEmission) {
     Intersection inter = getIntersection(ray);
     if (!inter.happened) return {};
 
-    Ray omega_o { inter.pos, Random::randomHemisphereDirection(inter.getNormal()) };
-    Intersection light_inter { getIntersection(omega_o) };
-    if (light_inter.happened) {
-        Vec3 brdf { inter.calcBRDF(-omega_o.dir, -ray.dir)};
-        float cosine_term = omega_o.dir.dot(inter.getNormal());
-        return inter.getEmission() + (2*PI * cosine_term) * brdf * trace(omega_o, bouncesLeft-1, false);
+    Vec3 direct_rad {};
+    Intersection sample { sampleLight() };
+    Vec3 light_dir { sample.pos - inter.pos };
+    float dlight { light_dir.getLength() };
+    Ray ray_to_light { inter.pos, light_dir / dlight };
+    if (getIntersection(ray_to_light).object == sample.object) {
+        Vec3 brdf { inter.calcBRDF(ray.dir, ray_to_light.dir) };
+        float cosine_term = inter.getNormal().dot(ray_to_light.dir);
+        float light_cosine_term = sample.getNormal().dot(-ray_to_light.dir);
+        direct_rad = sample.getEmission() * (lightArea * cosine_term * light_cosine_term * brdf / (dlight * dlight));
+    }
+
+    Ray omega_i { inter.pos, Random::cosWeightedHemisphere(inter.getNormal()) };
+    Intersection omega_inter { getIntersection(omega_i) };
+    if (omega_inter.happened) {
+        Vec3 brdf { inter.calcBRDF(-omega_i.dir, -ray.dir)};
+        if (discardEmission) 
+            return direct_rad + (PI * brdf) * trace(omega_i, bouncesLeft-1, true);
+        else 
+            return inter.getEmission() + direct_rad + (PI * brdf) * trace(omega_i, bouncesLeft-1, true);
     }
 
     return {};
