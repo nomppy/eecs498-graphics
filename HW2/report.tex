@@ -1,0 +1,141 @@
+\documentclass{article}
+\title{EECS 498 - Homework 2 report}
+\author{Kenneth Sun}
+
+\usepackage{listings}
+\usepackage{color}
+\usepackage{graphicx}
+
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+
+\lstset{frame=tb,
+  language=Java,
+  aboveskip=3mm,
+  belowskip=3mm,
+  showstringspaces=false,
+  columns=flexible,
+  basicstyle={\small\ttfamily},
+  numbers=none,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue},
+  commentstyle=\color{dkgreen},
+  stringstyle=\color{mauve},
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=3
+}
+
+\lstset{language=C++}
+
+\begin{document}
+\maketitle
+
+\section{Diffuse-only trace}
+\begin{lstlisting}
+Vec3 Scene::trace(const Ray &ray, int bouncesLeft, bool discardEmission) {
+    if constexpr(DEBUG) {
+        assert (ray.isNormalized());
+    }
+    if (bouncesLeft < 0) return {};
+
+    Intersection inter = getIntersection(ray);
+    if (!inter.happened) return {};
+
+    return inter.getDiffuseColor();
+}
+\end{lstlisting}
+
+\section{Direct illumination w/o acceleration}
+\begin{lstlisting}
+Vec3 Scene::trace(const Ray &ray, int bouncesLeft, bool discardEmission) {
+    if constexpr(DEBUG) {
+        assert (ray.isNormalized());
+    }
+    if (bouncesLeft < 0) return {};
+
+    Intersection inter = getIntersection(ray);
+    if (!inter.happened) return {};
+
+    Ray omega_o { inter.pos, Random::randomHemisphereDirection(inter.getNormal()) };
+    Intersection light_inter { getIntersection(omega_o) };
+    if (light_inter.happened) {
+        Vec3 brdf { inter.calcBRDF(-omega_o.dir, -ray.dir)};
+        float cosine_term = omega_o.dir.dot(inter.getNormal());
+        return inter.getEmission() + (2*PI * cosine_term) * brdf * light_inter.getEmission();
+    }
+
+    return {};
+}
+\end{lstlisting}
+
+Output with SPP=32:\\
+\includegraphics[width=0.5\textwidth]{DI-noaccel.png}
+
+\textbf{Thought question: Why 16 SPP looks darker than 128 SPP?} This makes sense because unsampled points will be dark
+and 16SPP has more unsampled points.
+
+\section{Global illumination w/o acceleration}
+\begin{lstlisting}
+Vec3 Scene::trace(const Ray &ray, int bouncesLeft, bool discardEmission) {
+    if constexpr(DEBUG) {
+        assert (ray.isNormalized());
+    }
+    if (bouncesLeft == 0) return {};
+
+    Intersection inter = getIntersection(ray);
+    if (!inter.happened) return {};
+
+    Ray omega_o { inter.pos, Random::randomHemisphereDirection(inter.getNormal()) };
+    Intersection light_inter { getIntersection(omega_o) };
+    if (light_inter.happened) {
+        Vec3 brdf { inter.calcBRDF(-omega_o.dir, -ray.dir)};
+        float cosine_term = omega_o.dir.dot(inter.getNormal());
+        return inter.getEmission() + (2*PI * cosine_term) * brdf * trace(omega_o, bouncesLeft-1, false);
+    }
+
+    return {};
+}
+\end{lstlisting}
+Output with SPP=32:\\
+\includegraphics[width=0.5\textwidth]{GI-noaccel.png}
+
+\section{Global illumination w/ acceleration}
+\begin{lstlisting}
+Vec3 Scene::trace(const Ray &ray, int bouncesLeft, bool discardEmission) {
+    if constexpr(DEBUG) {
+        assert (ray.isNormalized());
+    }
+    if (bouncesLeft == 0) return {};
+
+    Intersection inter = getIntersection(ray);
+    if (!inter.happened) return {};
+
+    Vec3 direct_rad {};
+    Intersection sample { sampleLight() };
+    Vec3 light_dir { sample.pos - inter.pos };
+    float dlight { light_dir.getLength() };
+    Ray ray_to_light { inter.pos, light_dir / dlight };
+    if (getIntersection(ray_to_light).object == sample.object) {
+        Vec3 brdf { inter.calcBRDF(ray.dir, ray_to_light.dir) };
+        float cosine_term = inter.getNormal().dot(ray_to_light.dir);
+        float light_cosine_term = sample.getNormal().dot(-ray_to_light.dir);
+        direct_rad = sample.getEmission() * (lightArea * cosine_term * light_cosine_term * brdf / (dlight * dlight));
+    }
+
+    Ray omega_i { inter.pos, Random::cosWeightedHemisphere(inter.getNormal()) };
+    Intersection omega_inter { getIntersection(omega_i) };
+    if (omega_inter.happened) {
+        Vec3 brdf { inter.calcBRDF(-omega_i.dir, -ray.dir)};
+        if (discardEmission)
+            return direct_rad + (PI * brdf) * trace(omega_i, bouncesLeft-1, true);
+        else
+            return inter.getEmission() + direct_rad + (PI * brdf) * trace(omega_i, bouncesLeft-1, true);
+    }
+
+    return {};
+}
+\end{lstlisting}
+\includegraphics[width=0.5\textwidth]{GI-accel.png}
+\end{document}}
