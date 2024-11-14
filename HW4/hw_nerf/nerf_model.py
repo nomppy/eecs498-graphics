@@ -26,11 +26,11 @@ def get_rays(H, W, focal, pose):
         torch.arange(W, dtype=torch.float32),
         torch.arange(H, dtype=torch.float32)
     )
-    u = u.t()
-    v = v.t()
+    u = u.t() # [H, W]
+    v = v.t() # [H, W]
 
     #############################################################################
-    #                                   TODO: Task 1                            #
+    #                                   Task 1                            #
     ############################################################################# 
     # Step 1: Calculate the direction vectors for each ray originating from the camera center in the camera coordinate.
     # We assume the camera looks towards -z. 
@@ -38,16 +38,17 @@ def get_rays(H, W, focal, pose):
     #  Note: the focal length here is in the unit of pixels. The coordinates are normalized with respect to the focal length (which means that should be divided by focal).
     # Plus, Cast to the device (cuda)
     
-    # dirs = 
+    dirs = torch.stack([(u - W * 0.5) / focal, -(v - H * 0.5) / focal, -torch.ones_like(u)], -1).to(device) # [W, H, 3]
     
     # Step 2: Transform the direction vectors (dirs) from camera coordinates to world coordinates.
     # The provided pose is camera-to-world matrix. Please note the expected rays_d should have the shape of [N, 3], where N is the number of rays.
 
-    # rays_d = 
+    # rays_d = (pose[:3, :3] @ dirs.reshape(-1, 3).unsqueeze(-1)).squeeze() # [3, 3] @ [H*W, 3, 1] -> [H*W, 3, 1] -> [H*W, 3]
+    rays_d = (pose[:3, :3] @ dirs.reshape(-1, 3).T).T
 
     # Step 3: Normalize the direction vectors on the last dimension (only 3 channels) to ensure they have unit length (Hint: check torch.norm and look at keepdim parameter of it).
 
-    # rays_d = ...
+    rays_d = rays_d / torch.linalg.vector_norm(rays_d, dim=-1, keepdim=True)
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -81,9 +82,11 @@ def positional_encoder(p, L_embed=6):
     # Loop over the number of frequency levels.
     for i in range(L_embed):
         #############################################################################
-        #                                   TODO: Task 2                            #
+        #                                   Task 2                            #
         #############################################################################
         # hint: following the order of (sin, cos), like for fn in [torch.sin, torch.cos]:
+        for fn in [torch.sin, torch.cos]:
+            rets.append(fn(2.0 ** i * p))
 
         #############################################################################
         #                             END OF YOUR CODE                              #
@@ -115,20 +118,20 @@ def cumprod_exclusive(tensor: torch.Tensor):
     Hint: Check torch.cumprod function. 
     """
     #############################################################################
-    #                                   TODO: Task 3                            #
+    #                                   Task 3                            #
     #############################################################################
     # Compute the cumulative product along the last dimension of the tensor. Hint: Check torch.cumprod
     
-    # cumprod = ...
+    cumprod = torch.cumprod(tensor, dim=-1)
     
     # Roll the elements along the last dimension by one position. Hint: Check torch.roll
     # This shifts the cumulative products to make them exclusive.
 
-    # cumprod = ...
+    cumprod = torch.roll(cumprod, 1, dims=-1)
 
     # Set the first element of the last dimension to 1, as the exclusive product of the first element is always 1.
     
-    # Your code here
+    cumprod[..., 0] = 1
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -179,7 +182,7 @@ def render(model, rays_o, rays_d, near, far, n_samples, rand=False):
     """
 
     # Sample points along each ray, from 'near' to 'far'.
-    t = torch.linspace(near, far, n_samples).to(device)
+    t = torch.linspace(near, far, n_samples).to(device) # [n_samples]
     if rand:
         mids = 0.5 * (t[..., 1:] + t[..., :-1])
         upper = torch.cat([mids, t[..., -1:]], -1)
@@ -188,11 +191,12 @@ def render(model, rays_o, rays_d, near, far, n_samples, rand=False):
         t = lower + (upper - lower) * t_rand
 
     #############################################################################
-    #                                   TODO: Task 4 A                          #
+    #                                   Task 4 A                          #
     #############################################################################
     # Compute 3D coordinates of the sampled points along the rays.
 
-    # points = ...
+    # [W*H, 1, 3] * [1, N, 1]  -> [W*H, N, 3]
+    points = rays_o[:, None, :] + rays_d[:, None, :] * t[None, :, None] # [W*H, N, 3]
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -207,8 +211,8 @@ def render(model, rays_o, rays_d, near, far, n_samples, rand=False):
     raw = torch.reshape(raw, list(points.shape[:-1]) + [4])
 
     # Compute densities (sigmas) and RGB values from the model's output.
-    sigma = F.relu(raw[..., 3])
-    rgb = torch.sigmoid(raw[..., :3])
+    sigma = F.relu(raw[..., 3]) # [W*H, N]
+    rgb = torch.sigmoid(raw[..., :3]) # [W*H, N, 3]
 
     #############################################################################
     #                                   TODO: Task 4 B                          #
@@ -216,18 +220,21 @@ def render(model, rays_o, rays_d, near, far, n_samples, rand=False):
     # Tries to solve the calculation from Matrix perspective instead of the For Loop
     # Perform volume rendering to obtain the weights of each point.
 
-    # one_e_10 = ...
-    # dists = ...
-    # alpha = ...
-    # weights = ...
+    one_e_10 = 1e10
+    dists = torch.roll(t, -1) - t # [N]
+    dists[-1] = one_e_10
+    T = cumprod_exclusive(torch.exp(-sigma * dists)) # [W*H, N]
+    weights = T * (1 - torch.exp(-sigma * dists)) # [W*H, N]
     
     # Compute the weighted sum of RGB values along each ray to get the final pixel color.
 
-    # rgb_map = ...
+    # [W*H, N, 1] * [W*H, N, 3] -> [W*H, 3]
+    rgb_map = torch.sum(weights.unsqueeze(-1) * rgb, dim=1)
 
     # Compute the depth map as the weighted sum of sampled depths.
 
-    # depth_map = ...
+    # [W*H, N] * [N] = [W*H, N] -> [W*H]
+    depth_map = torch.sum(weights * t, dim=1)
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################

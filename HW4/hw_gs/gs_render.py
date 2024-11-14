@@ -61,11 +61,21 @@ def build_rotation(r):
     y = q[:, 2]
     z = q[:, 3]
     #############################################################################
-    #                                   TODO: Task 1 A                          #
-    #############################################################################
     # Get the rotation matrix from the quaternion
     # Here, we already help you initialize the Rotation Matrix to be (3x3) all zero matrix
     R = torch.zeros((q.size(0), 3, 3), device="cuda")
+    R[:,0,0] = 1 - 2 * (y * y + z * z)
+    R[:,0,1] = 2 * (x * y - r * z)
+    R[:,0,2] = 2 * (x * z + r * y)
+
+    R[:,1,0] = 2 * (x * y + r * z)
+    R[:,1,1] = 1 - 2 * (x * x + z * z)
+    R[:,1,2] = 2 * (y * z - r * x)
+
+    R[:,2,0] = 2 * (x * z - r * y)
+    R[:,2,1] = 2 * (y * z + r * x)
+    R[:,2,2] = 1 - 2 * (x * x + y * y)
+
 
     #############################################################################
     #                             END OF YOUR CODE                              #
@@ -90,12 +100,14 @@ def build_scaling_rotation(scaling_vector, quaternion_vector):
     R = build_rotation(quaternion_vector)
 
     #############################################################################
-    #                                   TODO: Task 1 B                          #
+    #                                   Task 1 B                          #
     #############################################################################
     # Get the scaling matrix from the scaling vector
     # Hint: Check Formula 3 in the isntruction pdf
 
-    # S = ...
+    S[:, 0, 0] = scaling_vector[:, 0]
+    S[:, 1, 1] = scaling_vector[:, 1]
+    S[:, 2, 2] = scaling_vector[:, 2]
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -156,20 +168,21 @@ def build_covariance_2d(mean3d, cov3d, viewmatrix, fov_x, fov_y, focal_x, focal_
     # Eq.29 locally affine transform
     # perspective transform is not affine so we approximate with first-order taylor expansion
     # notice that we multiply by the intrinsic so that the variance is at the sceen space
-    J = torch.zeros(mean3d.shape[0], 3, 3).to(mean3d)
+    J = torch.zeros(mean3d.shape[0], 3, 3).to(mean3d) # [B, 3, 3]
     J[..., 0, 0] = 1 / tz * focal_x
     J[..., 0, 2] = -tx / (tz * tz) * focal_x
     J[..., 1, 1] = 1 / tz * focal_y
     J[..., 1, 2] = -ty / (tz * tz) * focal_y
-    W = viewmatrix[:3, :3].T  # transpose to correct viewmatrix
+    W = viewmatrix[:3, :3].T  # transpose to correct viewmatrix #[3, 3]
 
     #############################################################################
-    #                                   TODO: Task 2                           #
+    #                                    Task 2                           #
     #############################################################################
     # Calculate the 2D covariance matrix cov2d
     # Hint: Check Args explaination for cov3d; For clean code of matrix multiplication, consider using @
 
-    # cov2d = ...
+    # [B, 3, 3] @ [3, 3] @ [B, 3, 3] @ [3, 3] @ [3, 3, B]
+    cov2d = J @ W @ cov3d @ W.T @ torch.transpose(J, 1, 2)
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -228,6 +241,11 @@ def get_rect(pix_coord, radii, width, height):
     rect_max[..., 1] = rect_max[..., 1].clip(0, height - 1.0)
     return rect_min, rect_max
 
+def cumprod_exclusive(tensor: torch.Tensor, dim=-1):
+    cumprod = torch.cumprod(tensor, dim=dim)
+    cumprod = torch.roll(cumprod, 1, dims=dim)
+    cumprod[..., 0] = 1
+    return cumprod
 
 class GaussRenderer(nn.Module):
     """
@@ -265,15 +283,21 @@ class GaussRenderer(nn.Module):
         self.render_alpha = torch.zeros(*self.pix_coord.shape[:2], 1).to("cuda")
 
         TILE_SIZE = 16
+        COLOR_BG = torch.tensor([1., 1., 1.]).to('cuda')
         for h in range(0, camera.image_height, TILE_SIZE):
             for w in range(0, camera.image_width, TILE_SIZE):
                 #############################################################################
-                #                                   TODO: Task 3                           #
+                #                                    Task 3                           #
                 #############################################################################
                 # check if the 2D gaussian intersects with the tile 
                 # To do so, we need to check if the rectangle of the 2D gaussian (rect) intersects with the tile
 
-                # in_mask = .....
+                in_mask = (
+                    (rect[0][:, 0] < w + TILE_SIZE) & 
+                    (rect[0][:, 1] < h + TILE_SIZE) & 
+                    (w < rect[1][:, 0]) &
+                    (h < rect[1][:, 1])
+                )
                 #############################################################################
                 #                             END OF YOUR CODE                              #
                 #############################################################################
@@ -289,9 +313,10 @@ class GaussRenderer(nn.Module):
                 sorted_means2D = means2D[in_mask][index]
                 sorted_cov2d = cov2d[in_mask][index]  # P 2 2
                 sorted_inverse_conv = sorted_cov2d.inverse()  # inverse of variance
-                sorted_opacity = opacity[in_mask][index]
-                sorted_color = color[in_mask][index]
-                dx = tile_coord[:, None, :] - sorted_means2D[None, :]  # B P 2
+                sorted_opacity = opacity[in_mask][index] # [P 1]
+                sorted_color = color[in_mask][index] # P 3
+                dx = tile_coord[:, None, :] - sorted_means2D[None, :]  # [B P 2]
+                # print('dx', dx.shape)
 
                 #############################################################################
                 #                                   TODO: Task 4                           #
@@ -304,13 +329,27 @@ class GaussRenderer(nn.Module):
                 # Step 2: calculate alpha. alpha = (gauss_weight[..., None] * sorted_opacity[None]).clip(max=0.99)
                 # Step 3: calculate the accumulated alpha, color and depth.
 
-                # gauss_weight = ... # Hint: Check step 1 in the instruction pdf
-                # alpha = ... # Hint: Check step 2 in the instruction pdf
-                # T = ... # Hint: Check Eq. (6) in the instruction pdf
+                # [B P (1) 2] @ [P 2 2] @ [B P 2 (1)] = [B P 1 2] @ [B P 2 1] = [B P 1] -> [B P]
+                gauss_weight = torch.exp(-0.5 * (dx.unsqueeze(2) @ sorted_inverse_conv @ dx.unsqueeze(-1)).squeeze()) # [B P]
+                # gauss_weight = torch.exp(-0.5 * torch.einsum('bpi,pij,bpj->bp', dx, sorted_inverse_conv, dx)) # [B P]
 
-                # acc_alpha =  ... # Hint: Check Eq. (8) in the instruction pdf
-                # tile_color = ... # Hint: Check Eq. (5) in the instruction pdf
-                # tile_depth = ... # Hint: Check Eq. (7) in the instruction pdf
+                alpha = (gauss_weight.unsqueeze(-1) * sorted_opacity.unsqueeze(0)).clip(max=0.99) # [B P 1] * [1 P 1] = [B P 1]
+                T = cumprod_exclusive(1-alpha, dim=1) # [B P 1]
+                weights = T*alpha # [B P 1]
+
+                # print('T: ', T.shape)
+                # print('sorted_opacity: ', sorted_opacity.shape)
+                # print('sorted_depth: ', sorted_depths.shape)
+                # print('alpha: ', alpha.shape)
+                # print('sorted color', sorted_color.shape)
+                acc_alpha =  torch.sum(weights, dim=1) # [B, 1]
+                # [B P 1] * [P 3] -> [B P 3] --sum--> [B, 3]
+                tile_color = torch.sum(weights * sorted_color, dim=1) + (1 - acc_alpha) * COLOR_BG
+                # [B P 1] * [P (1)] = [B P 1] --sum--> [B, 1]
+                tile_depth = torch.sum(weights * sorted_depths.unsqueeze(-1), dim=1)
+                # print('acc_alpha:', acc_alpha.shape)
+                # print('tile_color:', tile_color.shape)
+                # print('tile_depth:', tile_depth.shape)
                 #############################################################################
                 #                             END OF YOUR CODE                              #
                 #############################################################################

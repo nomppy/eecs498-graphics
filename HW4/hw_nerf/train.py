@@ -62,13 +62,14 @@ def train(rawData, model, optimizer, n_iters=3000):
         # Render the scene using the current model state.
         # 
 
-        # rays_o, rays_d = ...
-        # rgb, depth = ...
+        rays_o, rays_d = get_rays(H, W, focal, pose)
+        rgb, depth = render(model, rays_o, rays_d, near=2., far=6., n_samples=n_samples)
+        rgb = rgb.reshape(H, W, 3)
 
-        # optimizer... 
-        # image_loss = ...
-        # image_loss.backward() # calculate the gradient w.s.t image_loss
-        # optimizer.step() # do update
+        optimizer.zero_grad()
+        image_loss = torch.nn.functional.mse_loss(rgb, target)
+        image_loss.backward() # calculate the gradient w.s.t image_loss
+        optimizer.step() # do update
 
         #############################################################################
         #                             END OF YOUR CODE                              #
@@ -80,6 +81,8 @@ def train(rawData, model, optimizer, n_iters=3000):
             with torch.no_grad():
                 rays_o, rays_d = get_rays(H, W, focal, testpose)
                 rgb, depth = render(model, rays_o, rays_d, near=1., far=7., n_samples=n_samples)
+                rgb = rgb.reshape(H, W, 3)
+                depth = depth.reshape(H, W)
                 loss = torch.nn.functional.mse_loss(rgb, testimg)
                 # Calculate PSNR for the rendered image.
                 psnr = mse2psnr(loss)
@@ -146,11 +149,13 @@ def main():
         test_img_idx = test_img_idx_list[-1]
         rays_o, rays_d = get_rays(H, W, focal, poses[test_img_idx])
         #############################################################################
-        #                                   TODO: Task 4                            #
+        #                                   Task 4                            #
         #############################################################################
         # Render the scene using the current model state. You may want to use near = 2, far = 6, n_samples = 64 
         
-        # rgb, depth = ..., 
+        rgb, depth = render(nerf, rays_o, rays_d, 2, 6, 64)
+        rgb = rgb.reshape((W, H, 3))
+        depth = depth.reshape((W, H))
 
         #############################################################################
         #                             END OF YOUR CODE                              #
@@ -188,7 +193,9 @@ def main():
             #############################################################################
             # Render the scene using the current model state. You may want to use near = 2, far = 6, n_samples = 64.
 
-            # rgb, depth = ...
+            rgb, depth = render(nerf, rays_o, rays_d, 2, 6, 64)
+            rgb = rgb.reshape((W, H, 3))
+            depth = depth.reshape((W, H))
             #############################################################################
             #                             END OF YOUR CODE                              #
             #############################################################################
