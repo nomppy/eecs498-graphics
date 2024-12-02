@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/gpfs/accounts/eecs498s014f24_class_root/eecs498s014f24_class/sunken/eecs498-graphics/HW5/Diffusion/execute_DDPM_DDIM.py", line 8, in <module>
+    from pipeline.pipeline_ddpm import DDPMPipeline
+  File "/gpfs/accounts/eecs498s014f24_class_root/eecs498s014f24_class/sunken/eecs498-graphics/HW5/Diffusion/pipeline/pipeline_ddpm.py", line 19, in <module>
+    from diffusers.utils.torch_utils import randn_tensor
+ModuleNotFoundError: No module named 'diffusers'

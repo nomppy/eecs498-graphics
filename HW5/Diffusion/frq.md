@@ -1,0 +1,2 @@
+### Please report the time you need for DDPM and DDIM respectively and briefly talk about the pros and cons of using DDIM as the scheduler over DDPM. One sentence response is adequate. 
+DDPM takes around 10 minutes, DDIM around 17 seconds. DDIM is much faster in sampling but is deterministic with less sample diversity.

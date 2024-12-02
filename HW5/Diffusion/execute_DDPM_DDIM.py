@@ -18,7 +18,7 @@ if __name__ == "__main__":
 
     # Setting
     model_id = "google/ddpm-celebahq-256"       # Human face Unconditional Pre-trained model weight
-    num_images = 10
+    num_images = 20
     scheduler_name = args.scheduler_name # DDIM or DDPM
 
 
